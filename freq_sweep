@@ -1,0 +1,121 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Jan 10 23:16:26 2019
+
+@author: Sisira
+"""
+
+# Linear frequency sweep for LogMag and Phase with varying daq bias - S11 measurement
+# gate_voltage defined as what goes as input to fridge, 
+# gate defined as voltage_divider times gate_max is the input to daq
+# same goes for flux
+
+#Import modules
+
+import instrument_classes_module as icm #compiled function module
+import matplotlib.pyplot as plt #plots module
+import numpy as np #Scientific computing module
+import os #system functions
+import time #for transient delay
+
+na=icm.agilent_e5071c(15) #call the network analyzer
+daq=icm.national_instruments_bnc2090() #call daq
+os.mkdir('data_freq_sweep')
+
+#parameter file
+
+par_array=[]
+par_array.append([0,"Channel number?",1])
+par_array.append([1,"Number of traces?",2])
+par_array.append([2,"Number of sweep points?",201])
+par_array.append([3,"Averaging number?",2])
+par_array.append([4,"Power? (in dB)" -55])
+par_array.append([5,"Span?(in SI units" 20.0e6])
+par_array.append([6,"Center frequency? (in SI units)" 5.76e9])
+par_array.append([7,"Max gate voltage?" 50.0e-3])
+par_array.append([8,"Number of sweep points for gate?" 10])
+par_array.append([9,"Max flux voltage?" 50.0e-3])
+par_array.append([10,"Number of sweep points for flux?" 10])
+
+
+
+#allocate channels to top_bottom
+
+na.allocate_traces('1_2')
+
+#parameter values
+
+ch=input("Channel number?") or 1 #channel int to be used
+num_traces=2 #number of total traces
+points=201 #number of sweep points
+av=input("Averaging number?") or 16 #averaging number
+power=input("power? (in dB)") #input power
+span=input("span? (in SI units)") or 20.0e6 #span
+centr=input("Center Frequency? (in SI units)") or 5.76e9 #center frequency
+
+# measurement settings
+
+na.set_channel(ch)
+na.set_num_traces(num_traces)
+na.set_measurement('S11',ch)
+na.set_sweep_type('lin',ch)
+na.set_sweep_mode('STEP')
+na.set_sweep_points(points,ch)
+na.set_freqs(centr,span,'span',ch)
+na.set_power(power,ch)
+na.set_format('MLOG',ch,1)
+na.set_format('PHAS',ch,2)
+na.toggle_averaging(1,ch)
+na.set_averaging(av,ch)
+na.set_trigger_source('man')
+na.toggle_averaging_trigger(1)
+na.toggle_continuous_triggering(1,ch)
+na.toggle_output(1)
+
+#bias settings
+
+gate_max=input('Max gate voltage?') or 50.0e-3
+gate_sweep_no=input('Number of sweep points for gate?') or 100
+gate_step=2*gate_max/gate_sweep_no
+flux_max=input('Max Flux bias?') or 50.0e-3
+flux_sweep_no=input('Number of sweep points for flux?') or 100
+flux_step=2*flux_max/flux_sweep_no
+voltage_divider=10
+
+#main loop
+
+start_time_flux=time.time()
+for i in range(flux_sweep_no+1):
+    flux=(-flux_max+(i*flux_step))
+    daq.set_voltage(1,flux*voltage_divider)
+    start_time_gate=time.time()
+    for j in range(gate_sweep_no+1):
+        gate=(-gate_max+(j*gate_step))
+        daq.set_voltage(0,gate*voltage_divider)
+        data=[]
+        time.sleep(1.0)
+        na.trigger(1)
+        freq=na.get_frequency_data(ch)
+        for trace in range(1,3):
+            na.autoscale(ch,trace)
+            na.transfer_data_to_memory(ch,trace)
+            data.append(na.get_trace_data(ch,trace))
+        
+        time_elapsed_gate=time.time()-start_time_gate
+        print("Time taken to complete" + str(j) + "loops in gate is " + str(time_elapsed_gate))
+        plt.figure()
+        plt.subplot(2,1,1)
+        plt.plot(freq,data[0])
+        plt.subplot(2,1,2)
+        plt.plot(freq,data[1])
+        filename_str_logmag='data_freq_sweep/freq_sweep_logmag'+str(gate)+'_'+str(flux)
+        filename_logmag="%s.csv" %filename_str_logmag
+        np.savetxt(filename_logmag,np.column_stack((freq,data[0])))
+        filename_str_phase='data_freq_sweep/freq_sweep_phase'+str(gate)+'_'+str(flux)
+        filename_phase="%s.csv" %filename_str_phase
+        np.savetxt(filename_phase,np.column_stack((freq,data[1])))
+        
+    time_elapsed_flux=time.time()-start_time_flux
+    print("Time taken to complete" + str(i) + "loops in flux is " + str(time_elapsed_flux))
+    
+    
