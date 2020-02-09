@@ -99,7 +99,7 @@ class Novatech_409B(serial_instrument):
             print('Amplitude of channel '+str(channel)+ ' is '
                   +str(amp[channel])+' V')
             
-    def set_frequency_mhz(self,channel,freq):
+    def set_frequency_MHz(self,channel,freq):
         freq_str='F{channel} {freq}'.format(channel=channel,freq=freq)
         self.write(freq_str)
         self.read()
@@ -145,6 +145,18 @@ class Novatech_409B(serial_instrument):
     def reset(self):
         self.write('R')
         self.read()
+        
+    def set_state_freq(self,channel0,channel1,freq0,freq1):
+        self.manual_io_wait()
+        self.set_frequency_mhz(channel0,freq0)
+        self.set_frequency_mhz(channel1,freq1)
+        self.manual_io_run()
+        
+    def set_state_power(self,channel0,channel1,power0,power1):
+        self.manual_io_wait()
+        self.set_power_dbm(channel0,power0)
+        self.set_power_dbm(channel1,power1)
+        self.manual_io_run()
         
         
         
