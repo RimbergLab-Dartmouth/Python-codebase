@@ -182,3 +182,151 @@ class SRS_844(gpib):
             self.write('KEYP 1')
         return self.get_time_constant()
     
+class keysight_n5183b(gpib):
+    
+    def __init__(self, addr):
+        # inherit all the methods of gpib_instrument class
+        super().__init__(addr)
+
+    def set_frequency(self, freq):
+        #freq = float
+        message = ':freq '+str(freq)
+        self.write(message)
+        
+    def set_power(self, power, units = 'dbm'):
+        # power = float
+        # units = str
+        #   options: 'dbm', 'mv', 'dBuV', 'dBuVemf', 'uV', 'mVemf', 'uVemf'
+        message = ':pow '+str(power)+units
+        self.write(message)
+        
+    def set_phase(self, phase, units = 'rad'):
+        # phase = float
+        # units = str: 'rad' or 'deg'
+        message = ':phas '+str(phase)+units
+        self.write(message)
+        
+    def toggle_output(self, state):
+        # turns RF output on or off
+        # state = 0,1 (off,on)
+        message = ':outp '+str(state)
+        self.write(message)
+        
+    def toggle_modulation(self, state):
+        # turns modulation on or off
+        # state = 0,1 (off,on)
+        message = ':outp:mod '+str(state)
+        self.write(message)
+        
+    def toggle_pulse_mode(self, state):
+        # turns pulse mode on or off
+        # state = 0,1 (off,on)
+        message = ':pulm:stat '+str(state)
+        self.write(message)
+
+    def toggle_alc(self, state):
+        # turns on and off automatic leveling control
+        #   - useful for ultra-narrow-width (UNW) pulse generation
+        # state = 0,1 (off,on)
+        message = ':pow:alc '+str(state)
+        self.write(message)
+        
+    def set_pulse_source(self, source):
+        # sets the source for the pulse modulation tone
+        # source = str
+        #   options:
+        #       'ext'   -external pulse modulates output
+        #       'trig'  -internal source, triggered
+        #       'frun'  -internal source, free run
+        #       'ado'   -internal source, see manual
+        #       'doub'  -internal source, see manual
+        #       'gate'  -internal source, see manual
+        #       'ptr'   -internal source, see manual
+        if source == 'ext':
+            message = 'pulm:sour '+source
+        else:
+            message = 'pulm:sour:int '+source
+                
+        self.write(message)
+
+    def set_pulse_delay(self, delay, units='s'):
+        # sets pulse delay
+        # delay = float
+        # units = str: 's','us','ns'
+        message = ':pulm:int:del '+str(delay)+units
+        self.write(message)
+        
+    def set_pulse_width(self, width, units='s'):
+        # sets pulse delay
+        # width = float
+        # units = str: 's','us','ns'
+        message = ':pulm:int:pwid '+str(width)+units
+        self.write(message)
+        
+    def sweep_trigger_single(self):
+        """
+        This command aborts the current sweep, then either arms or arms and 
+        starts a single list, depending on the trigger type.
+        """
+        message = ':TSW'
+        self.write(message)
+        
+    def set_sweep_center_freq(self,freq):
+        """
+        This command sets the center frequency for a step sweep.
+        
+        Parameters:
+            freq (float): Center frequency for a step sweep in Hz.
+        """
+        message = ':FREQ:CENT {}'.format(freq)
+        self.write(message)
+    
+    def set_sweep_span(self,span):
+        """
+        This command sets the length of the frequency range for a step sweep.
+        Span setting is symmetrically divided by the selected center frequency.
+        
+        Parameters:
+            span (float): Value of span in Hz.
+        """
+        
+        message = ':FREQ:SPAN {}'.format(span)
+        self.write(message)
+        
+    def set_sweep_dwell_time(self,time):
+        """
+        This command enables you to set the dwell time for a step sweep.
+        The variable <value> is expressed in units of seconds 
+        with a 0.001 resolution.
+        
+        Parameters:
+            time (float): Dwell time in seconds.
+        """
+        
+        message = ':SWE:DWEL {}'.format(time)
+        self.write(message)
+    
+    def set_sweep_points(self,points):
+        """
+        This command defines the number of step sweep points.
+        
+        Parameters:
+            points (int): Number of points in the sweep.
+        """
+        message = ':SWE:POIN {}'.format(int(points))
+        self.write(message)
+        
+    def set_mode(self,mode = 'CW'):
+        """
+        This command sets the frequency mode of the signal generator to 
+        CW or swept.
+        
+        Parameters:
+            mode (str): Mode for enabling continuous ('CW') or list/step
+            sweep ('LIST').
+        """
+        message = ':FREQ:MODE {}'.format(mode)
+        self.write(message)
+        
+        
+    
