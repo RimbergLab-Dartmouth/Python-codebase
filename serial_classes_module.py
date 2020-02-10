@@ -172,7 +172,6 @@ class Novatech_409B(serial_instrument):
         self.manual_io_wait()
         self.set_phase_rad(channel0,phase0)
         self.set_phase_rad(channel1,phase1)
-        self.phase_sync()
         self.manual_io_run()
         
         
