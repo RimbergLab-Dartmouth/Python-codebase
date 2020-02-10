@@ -138,6 +138,14 @@ class Novatech_409B(serial_instrument):
         self.write('I a')
         self.read()
         
+    def phase_sync(self,state = True):
+        if state:
+            self.write('M a')
+            self.read()
+        else:
+            self.write('M n')
+            self.read()
+        
     def save(self):
         self.write('S')
         self.read()
@@ -148,14 +156,23 @@ class Novatech_409B(serial_instrument):
         
     def set_state_freq(self,channel0,channel1,freq0,freq1):
         self.manual_io_wait()
-        self.set_frequency_mhz(channel0,freq0)
-        self.set_frequency_mhz(channel1,freq1)
+        self.set_frequency_MHz(channel0,freq0)
+        self.set_frequency_MHz(channel1,freq1)
+        self.phase_sync()
         self.manual_io_run()
         
     def set_state_power(self,channel0,channel1,power0,power1):
         self.manual_io_wait()
         self.set_power_dbm(channel0,power0)
         self.set_power_dbm(channel1,power1)
+        self.phase_sync()
+        self.manual_io_run()
+        
+    def set_state_phase(self,channel0,channel1,phase0,phase1):
+        self.manual_io_wait()
+        self.set_phase_rad(channel0,phase0)
+        self.set_phase_rad(channel1,phase1)
+        self.phase_sync()
         self.manual_io_run()
         
         
