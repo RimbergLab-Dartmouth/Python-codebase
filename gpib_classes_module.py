@@ -182,6 +182,84 @@ class SRS_844(gpib):
             self.write('KEYP 1')
         return self.get_time_constant()
     
+    def set_expand(self, channel, expand = 1, display = 0):
+        """
+        Set expand for the output.
+        
+        Parameters:
+            channel (int): Channel number
+            display (int): Display for channel. 0 implies X/Y.
+            expand (int): Expansion factor 1/10/100
+            
+        Returns:
+            Value of expand.
+        """
+        value = int(np.log10(expand))
+        self.write('DEXP{},{},{}'.format(channel, display, value))
+        
+    def set_filter_slope(self, slope):
+        """
+        Sets the filter slope.
+        
+        Parameters:
+            slope (int): Filter slope value - 6/12/18/24.
+            
+        Returns:
+            str: Value of filter slope.
+        """
+        slope_index=slope//6
+        self.write('OFSL{}'.format(slope_index))
+        return self.get_filter_slope()
+    
+    def get_filter_slope(self):
+        """
+        Gets the filter slope.
+        
+        Returns:
+            str: Value of slope.
+        """
+        
+        slope_int=self.query('OFSL?')
+        slope_str=['0', '6 dB/oct', '12 dB/oct', '18 dB/oct', '24 dB/oct']
+        return slope_str[int(slope_int)]
+    
+    def get_offset(self, quantity):
+        """
+        Gets the offset of channel.
+        
+        Parameters:
+            quantity (str): Quadrature offset to measure - 'X'/'Y' 
+        Returns:
+            offset_percent (float): Offset in percentage of full scale.
+        """
+        if quantity == 'X':
+            add_str = '1,0'
+        elif quantity == 'Y':
+            add_str = '2,0'
+        offset_percent=self.query('DOFF?{}'.format(add_str))
+        return eval(offset_percent)
+    
+    def set_offset(self, quantity, percent):
+        """
+        Sets the offset in percentage of full scale.
+        
+        Parameters:
+            quantity (str): Quadrature offset to measure - 'X'/'Y'
+            percent (float): Offset in percentage of full scale (from -110% to
+                                (110%)).
+        Returns:
+            offset_percent (float): Offset in percentage of full scale.
+        """
+        if quantity == 'X':
+            add_str = '1,0'
+        elif quantity == 'Y':
+            add_str = '2,0'
+        self.write('DOFF{},{}'.format(add_str,percent))
+        offset_percent = self.get_offset(quantity)
+        print(offset_percent)
+        return offset_percent
+        
+    
 class keysight_n5183b(gpib):
     
     def __init__(self, addr):

@@ -68,6 +68,16 @@ class Novatech_409B(serial_instrument):
         self.auto_io()
         self.print_state()
         
+#    def set_ref(self, ref):#Not needed if /R option is installed.
+#        if ref == 'e':
+#            self.write('C e')
+#            self.read()
+#            self.write(' 1 aa')
+#            self.read()
+#        elif ref == 'i':
+#            self.write('C i')
+#            self.read()
+        
     def get_state(self):
         self.write('QUE')
         freq=[]
@@ -165,6 +175,13 @@ class Novatech_409B(serial_instrument):
         self.manual_io_wait()
         self.set_power_dbm(channel0,power0)
         self.set_power_dbm(channel1,power1)
+        self.phase_sync()
+        self.manual_io_run()
+        
+    def set_state_Vpp(self,channel0,channel1,volt0,volt1):
+        self.manual_io_wait()
+        self.set_voltage_Vpp(channel0,volt0)
+        self.set_voltage_Vpp(channel1,volt1)
         self.phase_sync()
         self.manual_io_run()
         
