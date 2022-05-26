@@ -2,7 +2,7 @@
 """
 Created on Wed Nov 14 16:36:20 2018
 
-@author: Ben
+@author: Ben, Sisira
 """
 
 import numpy as np
@@ -10,7 +10,10 @@ import statistics
 import struct
 import visa
 import nidaqmx
+import os, time, sys
+import ctypes
 import tkinter as tk
+import atsapi as ats
 
 class gpib_instrument:
 
@@ -300,14 +303,55 @@ class hp_34401a(gpib_instrument):
     def __init__(self, addr):
         super().__init__(addr)
 
-    def get_voltage(self):
-        message = 'meas:volt:dc?'
+    def get_voltage(self, current_type = 'dc'):
+        """
+        Measures the voltage. Multimeter chooses the best available 
+        configuration.
+        
+        Parameters:
+            current_type (str): 'dc' or 'ac'
+        
+        Returns:
+            voltage in V
+        """
+        message = 'meas:volt:{}?'.format(current_type)
         return float(self.query(message))
     
     def get_current(self):
         message = 'meas:curr:dc?'
         return float(self.query(message))
-
+    
+    def set_detector_bandwidth(self,freq_min):
+        """
+        Sets the detector bandwidth. Useful for low or high frequencies.
+        
+        Parameters:
+            freq_min (int): Minimum value of signal frequency (3, 20 or 200 Hz).
+        """
+        message = 'det:band {}'.format(freq_min)
+        self.write(message)
+        
+    def read_voltage(self, current_type = 'ac', trig_source = 'imm',
+                     sample_count = 1, ac_bw=20):
+        """
+        Reads the voltage according to the set configuration.
+        
+        Parameters:
+            current_type (str): 'ac' or 'dc' measurement.
+            trig_source (str): Choose the trigger from 'bus', 'imm' or 'ext'.
+            sample_count (int): Counts per trigger.
+        
+        Returns:
+            volt (tuple): Voltage values corresponding to given counts.
+        """
+        self.write('conf:volt:{}'.format(current_type))
+        if current_type == 'ac':
+            self.set_detector_bandwidth(ac_bw)
+        self.write('trig:sour {}'.format(trig_source))
+        self.write('samp:count {}'.format(sample_count))
+        volt = self.query('read?')
+        return eval(volt)
+    
 """
 *******************************************************************************
 *******************************************************************************
@@ -357,6 +401,14 @@ class hp_6612c(gpib_instrument):
     def toggle_output(self, state):
         message = 'outp ' + str(state)
         self.write(message)
+    
+    def set_voltage(self, volt):
+        message = 'volt ' +str(volt)
+        self.write(message)
+    
+    def get_voltage(self):
+        message = 'meas:volt?'
+        return float(self.query(message))
 
 
 """
@@ -385,11 +437,16 @@ class keysight_n9000b(gpib_instrument):
         message = ':inst:scr:sel '+screen_str
         self.write(message)
         
-    def read_trace(self):
-        # performs a sweep and returns data
+    def read_trace(self,trace=1):
+        """
+        Performs a sweep and returns data
         # format: freq_str, pow_str, freq_str, pow_str, ...
         # I omit the new line character at the end of the trace
-        message = 'read:san?'
+        
+        Parameters:
+            trace (int): Trace number. Default to 1.
+        """
+        message = 'read:san{}?'.format(trace)
         return self.query(message)[:-1]
     
     def fetch_trace(self):
@@ -405,14 +462,27 @@ class keysight_n9000b(gpib_instrument):
         message = 'trac:math:peak?'
         return self.query(message)[:-1]
     
-    def get_peaks(self, threshold, excursion):
-        # NOTE: RETURN FORMAT:
-        #       num_peaks, peak1_power, peak1_freq, peak2_power, ...
-        # get all peaks above a certain threshold & excursion
-        # threshold = float (minimum power level in dBm)
-        # excursion = float (rise and fall in dBm)
-        message = ':calc:data:peak? '+str(threshold)+','+str(excursion)
-        return self.query(message)[:-1]
+    def get_peaks(self, threshold,convert=True):
+        """
+        Get peak from the active trace with the set threshold and zero
+        excursion.
+        
+        Parameters:
+            threshold (float): Threshold in dBm for identifying the peak.
+            
+        Returns:
+            freq (list): Frequency of peaks
+            power (list): Corresponding power of the frequencies
+        """
+        self.write('CALC:MARK:PEAK:THR {}'.format(threshold))
+        message = 'TRAC:MATH:PEAK?'
+        peaks = self.query(message)[:-1]
+        if convert:
+            peaks = peaks.split(',')
+            peaks = [float(ii) for ii in peaks]
+        freq = peaks[::2]
+        power = peaks[1::2]
+        return (freq, power)
     
     def toggle_automatic_resolution_bandwidth(self, state):
         # turn automatic coupling of resolution bw off or on
@@ -525,7 +595,9 @@ class keysight_n9000b(gpib_instrument):
         message = 'trac:type '+type_str
         self.write(message)
         
-    def set_detector_type(self, type_str):
+    def set_detector_type(self, type_str, trace=1):
+        """Sets the detector type for selected trace.
+        
         # type_str = str
         #   options:
         #       'AVERage'   - good for noise
@@ -533,7 +605,12 @@ class keysight_n9000b(gpib_instrument):
         #       'NORMal'    - works simultaneously for pure tones and noise
         #       'POSitive'  - positive peak, good for measuring pure tones
         #       'SAMPle'    - good for noise
-        message = ':det:trac '+type_str
+        
+        Parameters:
+            type_str (str): Detector type as listed above.
+            trace (int): Trace number. Selects trace 1 if none given.
+        """
+        message = ':det:trac{} {}'.format(trace,type_str)
         self.write(message)
         
     def trigger(self, wait=True):
@@ -563,8 +640,124 @@ class keysight_n9000b(gpib_instrument):
             time_config = self.query(message2)[:-1]
             waveform += time_config
         return waveform
+    
+    def set_ref_level(self, value_dbm):
+        """
+        Sets the reference value.
         
-
+        Parameters:
+            value_dbm (float) : Value of reference in dBm.
+        """
+        message = 'DISP:WIND:TRAC:Y:RLEV {} dBm'.format(value_dbm)
+        self.write(message)
+        
+    def set_marker_trace(self, marker, trace):
+        """
+        Places the marker on the trace specified.
+        
+        Parameters:
+            marker (int) : Marker number.
+            trace (int) : Trace number.
+        """
+        message = 'calc:mark{}:trac {}'.format(marker,trace)
+        self.write(message)
+        
+    def set_marker_band_function(self, marker, function):
+        """
+        Sets the band function for the selected marker.
+        
+        Parameters:
+            marker (int): Marker number.
+            function (str): Band function strings 
+            Options are 'NOISe','BPOWer','BDENsity','OFF'
+        """
+        message = 'calc:mark{}:func {}'.format(marker, function)
+        self.write(message)
+        
+    def get_marker_amplitude(self, marker):
+        """
+        Gets the amplitude of the selected marker.
+        
+        Parameters:
+            marker (int): Marker number.
+        Returns:
+            amp (float): Amplitude in dBm if band function is off. If the band
+            function is set to noise, the amplitude is given in dBm/Hz.
+            unit(str): Gives the unit of amplitude - dBm or dBm/Hz.
+        """
+        message = ':calc:mark{}:y?'.format(marker)
+        amp = eval(self.query(message))
+        message = 'calc:mark{}:func?'.format(marker)
+        function = self.query(message)[:-1]
+        if function == 'NOIS' or function == 'BDEN':
+            unit = 'dBm/Hz'
+        else:
+            unit = 'dBm'
+        
+        return amp, unit
+    
+    def clear_all_traces(self):
+        """
+        Clears all the traces.
+        """
+        message = ':trac:cle:all'
+        self.write(message)
+        
+    def set_marker_freq(self, marker, freq):
+        """
+        Places the marker at the selected frequency.
+        
+        Parameters:
+            marker(int): Marker number.
+            freq (float): Frequency at which the marker is to be placed (in Hz).
+        """
+        message = ':calc:mark{}:x {}'.format(marker,freq)
+        self.write(message)
+        
+    def toggle_automatic_sweeptime(self,state):
+        """
+        Toggles the sweep time to automatic or manual.
+        
+        Parameters:
+            state (binary): 0 or 1.
+        """
+        message = ':SWE:TIME:AUTO {}'.format(state)
+        self.write(message)
+        
+    def set_y_scaleperdivision(self,scale,unit='dB'):
+        """
+        Sets the scale per division of the amplitude.
+        
+        Parameters:
+            scale (float): Scale per division value.
+            unit (str): Unit default set to dB.
+        """
+        message = 'DISP:WIND:TRAC:Y:PDIV {} {}'.format(scale, unit)
+        self.write(message)
+        
+    def set_ref_level_offset(self,offset):
+        """
+        Sets the reference level in dB.
+        
+        Parameters:
+            offset (float): Value of offset in dB.
+        """
+        message = 'DISP:WIND:TRAC:Y:RLEV:OFFS {}'.format(offset)
+        self.write(message)
+        
+    def set_trace_average_hold_number(self,count):
+        """
+        Sets the number of measurement averages.
+        
+        Parameters:
+            count (int): Hold number.
+        """
+        message = 'CHP:AVER:COUN {}'.format(count)
+        self.write(message)
+        
+    def set_input_coupling(self, coupling_str):
+        message = 'inp:coup ' + coupling_str
+        self.write(message)
 
 
 """
@@ -1462,6 +1655,22 @@ class agilent_e5071c(gpib_instrument):
         # return all parameters relevant for interpreting trace data
         # power, averaging, electrical delay, format, Sij,
         pass
+    
+    def get_bandwidth_data(self, channel = None, marker = None, convert = False):
+        # gets the bandwidth data corresponsing to the set maximum
+        if not channel:
+            channel = self.query_channel()
+        if not marker:
+            marker = 1
+        message = ":CALC{}:MARK{}:BWID:DATA?".format(channel,marker)
+        bw_str = self.query(message)
+        if convert:
+            bw_list = bw_str.split(',')
+            bw_list = [float(ii) for ii in bw_list]
+            return bw_list
+        else:
+            return bw_str[:-1]
+        
        
 """
 *******************************************************************************
@@ -2105,12 +2314,11 @@ class tektronix_awg520(gpib_instrument):
         
         nsamples = len(w)
         m = m1 + np.multiply(m2, 2)
-        
         #packing waveform and markers into bytes data
         bytes_data = b''
         for ii in range(nsamples):
             bytes_data += struct.pack('<fB',w[ii],int(m[ii]))
-            
+        
         num_bytes = len(bytes_data)
         num_digits = len(str(num_bytes))
         
@@ -2138,6 +2346,7 @@ class tektronix_awg520(gpib_instrument):
         
         message = cmd + file_counter + file
         self.write_raw(message)
+        
 
     def load_waveform(self, channel, filename):
         # loads the waveform at filename into a channel
@@ -2224,6 +2433,72 @@ class tektronix_awg520(gpib_instrument):
         self.reset_cwd()
         message = 'mmem:cdir '+'"'+absolute_path+'"'
         self.write(message)
+        
+    #######################
+    # FG MODE #
+    #######################
+    def toggle_fg_mode(self, state):
+        """
+        Sets the function generator mode on or off.
+        Parameters:
+            state (int): 0 or 1 for on and off.
+        """
+        message = 'awgc:fg {}'.format(state)
+        self.write(message)
+        
+    def set_fg_frequency(self, freq_Hz):
+        """
+        Sets the frequency of the funtion waveform.
+        Parameters:
+            freq_Hz (float): Value of frequency in Hz.
+        """
+        message = 'awgc:fg:freq {}'.format(freq_Hz)
+        self.write(message)
+        
+    def set_fg_shape(self, channel, shape_str):
+        """
+        Sets the shape of the funtion waveform.
+        Parameters:
+            channel (int): Channel number.
+            shape_str (str): Standard waveform shape - 
+                            'SIN', 'TRI', 'SQU', 'RAMP', 'PULS'
+        """
+        message = 'awgc:fg{}:func {}'.format(channel, shape_str)
+        self.write(message)
+        
+    def set_fg_duty_cycle(self, channel, value):
+        """
+        Sets the duty cycle of the pulse waveform on the fg mode.
+        Parameters:
+            channel (int): Channel number.
+            value (float): Value of the duty cycle from 0.1 to 99.9%.
+        """
+        message = 'awgc:fg{}:puls:dcyc {}'.format(channel, value)
+        self.write(message)
+        
+    def set_fg_voltage_pp(self, channel, value):
+        """
+        Sets the voltage amplitude of the function waveform.
+        (NOTE: This is set for the 50 ohm impedance. Higher impedance load
+        will give double the output voltage.)
+        Parameters:
+            channel (int): Channel number.
+            value (float): Value of the peak to peak voltage (V).
+                            Range from 20 mV to 2 V only.
+        """
+        message = 'awgc:fg{}:volt {}'.format(channel, value)
+        self.write(message)
+        
+    def set_fg_voltage_offset(self, channel, value):
+        """
+        Sets the offset voltage of the function waveform.
+        Parameters:
+            channel (int): Channel number.
+            value (float): Value of the offset voltage (V).
+        """
+        message = 'awgc:fg{}:volt:offs {}'.format(channel, value)
+        self.write(message)
+    
         
 """
 *******************************************************************************
@@ -2444,3 +2719,375 @@ class national_instruments_bnc2090:
         ao1.trace('w',update_voltage_ao1)
         
         window.mainloop()
+        
+"""
+*******************************************************************************
+*******************************************************************************
+"""
+
+class alazartech_ats9462():    
+    def __init__(self, boardId = 1):
+        self.board = ats.Board(systemId = 1, boardId = 1)
+    
+    def set_timebase(self, source, sample_rate = 180e6):
+        """
+        Sets the timebase to internal, external or external 10 MHz clock.
+        Parameters:
+            source (str): Selects the source.
+                'int'/'fast_ext'/'ext_10'/'slow_ext'
+            sample_rate (float): The sample rate in Hz. Note only selected
+                values can be used. Check manual.
+        """
+        if source == 'int':
+            source_value = ats.INTERNAL_CLOCK
+            sample_rate_value = eval('ats.SAMPLE_RATE_{}MSPS'.format(
+                    int(sample_rate*1e-6)))
+        elif source == 'ext_10':
+            source_value = ats.EXTERNAL_CLOCK_10MHz_REF
+            sample_rate_value = eval('ats.SAMPLE_RATE_{}MSPS'.format(
+                    int(sample_rate)))
+        elif source == 'fast_ext':
+            source_value = ats.FAST_EXTERNAL_CLOCK
+            sample_rate_value = ats.SAMPLE_RATE_USER_DEF
+        elif source == 'slow_ext':
+            source_value = ats.SLOW_EXTERNAL_CLOCK
+            sample_rate_value = ats.SAMPLE_RATE_USER_DEF
+        self.board.setCaptureClock(source_value, sample_rate_value, 
+                                   ats.CLOCK_EDGE_RISING,0)
+        
+    def set_input_params(self, channel, input_range_V,
+                         coupling = 'dc',
+                         impedance = 1e6):
+        """
+        Sets the parameters for input - desired input range, termination,
+        coupling.
+        Parameters:
+            channel (int): selects the channel 1/2
+            input_range (float): specifies the input range. 
+                Available options for 50 Ohm - 0.2,0.4,0.8,2,4
+                Available options for 1 MOhm - 0.2,0.4,0.8,2,4,8,16
+            coupling (string): AC/DC
+            impedance (int): Sets the termination - 50/75/300/1e6
+        """
+        channel_value = eval('ats.CHANNEL_{}'.format(chr(64+channel)))
+        coupling_value = eval('ats.{}_COUPLING'.format(coupling.upper()))
+        if impedance == 1e6:
+            impedance_value = ats.IMPEDANCE_1M_OHM
+        else:
+            impedance_value = eval('ats.IMPEDANCE_{}_OHM'.format(impedance))
+        if input_range_V < 1:
+            input_range_value = eval('ats.INPUT_RANGE_PM_{}_MV'.format(
+                    int(input_range_V*1e3)))
+        else:
+            input_range_value = eval('ats.INPUT_RANGE_PM_{}_V'.format(
+                    int(input_range_V)))
+        self.board.inputControl(channel_value, coupling_value,
+                                input_range_value, impedance_value)
+    
+    def toggle_bandwidth_filter(self, channel, state = False):
+        """
+        Toggles the low pass filter that attenuate signal about 20 MHz.
+        Parameters:
+            channel (int): Selects the channel.
+            state (bool): Enables/Disables LPF.
+        """
+        self.board.setBWLimit(channel, int(state))
+        
+    def set_trigger_operation(self, source_1, slope_1, fraction_1,
+                              source_2 = None, slope_2 = None,
+                              fraction_2 = None):
+        """
+        Configures the two trigger engines. If source_2 is None, only J
+        tigger engine is used. If a (J or K) option is required, set the
+        parameters for labels _2.
+        Parameters:
+            source_1 (int/str): Trigger source to use for J (1/2/'ext'/'dis')
+                'dis' disables this engine.
+            slope_1 (str): Selects the rising/falling edge to activate engine
+                J. ('pos'/'neg')
+            fraction_1 (float): Sets the trigger level configuration for engine
+                J. Value is written as the fraction of the full scale input 
+                range. If input range is y mV, required level is x mV, 
+                the fraction is set as x/y.
+            source_2 (int/str): Trigger source to use for K (1/2/'ext'/'dis')
+                'dis' disables this engine. By default, set to None which
+                disables this engine.
+            slope_2 (str): Selects the rising/falling edge to activate engine
+                K. ('pos'/'neg')
+            fraction_2 (float): Sets the trigger level configuration for engine
+                K. Value is written as the fraction of the full scale input 
+                range. If input range is y mV, required level is x mV, 
+                the fraction is set as x/y.
+        """
+        if source_2:
+            trigger_op_config = ats.TRIG_ENGINE_OP_J_OR_K
+            if source_2 == 'ext':
+                source_2_value = ats.TRIG_EXTERNAL
+            else:
+                source_2_value = eval('ats.TRIG_CHAN_{}'.format(
+                        chr(source_2+64)))
+            if slope_2 == 'pos':
+                slope_2_value = ats.TRIGGER_SLOPE_POSITIVE
+            else:
+                slope_2_value = ats.TRIGGER_SLOPE_NEGATIVE
+            trigger_level_2 = int(128*(1+fraction_2))
+        else:
+            trigger_op_config = ats.TRIG_ENGINE_OP_J
+            source_2_value = ats.TRIG_DISABLE
+            slope_2_value = ats.TRIGGER_SLOPE_POSITIVE
+            trigger_level_2 = 128
+        if source_1 == 'ext':
+            source_1_value = ats.TRIG_EXTERNAL
+        elif source_1 == 'dis':
+            source_1_value = ats.TRIG_DISABLE
+        else:
+            source_1_value = eval('ats.TRIG_CHAN_{}'.format(chr(source_1+64)))
+        if slope_1 == 'pos':
+                slope_1_value = ats.TRIGGER_SLOPE_POSITIVE
+        else:
+            slope_1_value = ats.TRIGGER_SLOPE_NEGATIVE
+        trigger_level_1 = int(128*(1+fraction_1))
+        self.board.setTriggerOperation(trigger_op_config,
+                                       ats.TRIG_ENGINE_J,
+                                       source_1_value,
+                                       slope_1_value,
+                                       trigger_level_1,
+                                       ats.TRIG_ENGINE_K,
+                                       source_2_value,
+                                       slope_2_value,
+                                       trigger_level_2)
+        
+    def set_external_trigger_params(self, coupling = 'ac', 
+                                    trigger_range = ats.ETR_1V):
+        """
+        Sets the external trigger range and coupling.
+        Parameters:
+            coupling (str): Selects the coupling to AC/DC - 'ac'/'dc'
+            range (int): Sets the external trigger range identifier.
+                Options are 'ats.ETR_5V','ats.ETR_1V', ETR_TTL, 'ats.ETR_2V5'
+        """
+        coupling_value = eval('ats.{}_COUPLING'.format(coupling.upper()))
+        self.board.setExternalTrigger(coupling_value, trigger_range)
+        
+    def set_trigger_timeout(self, wait_sec):
+        """
+        Sets the amount of time the board will wait for a hardware trigger to
+        occur before automatically generating a software trigger event. If
+        set to zero, the board will wait forever for a trigger event.
+        Parameters:
+            wait_sec (float): Amount of time to wait in sec.
+        """
+        self.board.setTriggerTimeOut(int(wait_sec/10e-6))
+        
+    def set_trigger_delay(self, wait_sec):
+        """
+        Sets the amount of time the board will wait after it receives a
+        trigger before capturing a record.
+        Parameters:
+            wait_sec (float): Amount of time to wait in sec.
+        """
+        self.board.setTriggerDelay(int(wait_sec*180e6))
+    
+    def set_record_size(self, pretrigger, posttrigger):
+        """
+        Sets the number of pre-trigger and post-trigger samples per record.
+        Parameters:
+            pretrigger (int): Number of pre-trigger samples.
+            posttrigger (int): Number of post-trigger samples.
+        """
+        self.board.setRecordSize(pretrigger, posttrigger)
+        
+    def start_capture(self):
+        """
+        Arm a board to start an acquisition.
+        """
+        self.board.startCapture()
+        
+    def force_trigger(self):
+        """
+        Forces a trigger event.
+        """
+        self.board.forceTrigger()
+        
+    def configure_board(self, input_range_V1, input_range_V2, 
+                        trigger_source_1 = 'ext', trigger_source_2 = None,
+                        trigger_slope_1 = 'pos', trigger_slope_2 = None,
+                        trigger_fraction_1 = 0.2, trigger_fraction_2 = None,
+                        ref_source = 'fast_ext', sample_rate = None,
+                        coupling_1 = 'dc', coupling_2 = 'dc',
+                        impedance_1 = 1e6, impedance_2 = 1e6, bw_1 = False,
+                        bw_2 = False, trigger_coupling = 'dc', 
+                        trigger_range = ats.ETR_1V, delay_sec = 0,
+                        trigger_timeout_sec = 10e-6):
+        self.set_timebase(ref_source, sample_rate)
+        self.set_input_params(1, input_range_V1,
+                              coupling_1, impedance_1)
+        self.set_input_params(2, input_range_V2,
+                              coupling_2, impedance_2)
+        self.toggle_bandwidth_filter(1, bw_1)
+        self.toggle_bandwidth_filter(2, bw_2)
+        self.set_trigger_operation(trigger_source_1, trigger_slope_1, 
+                                   trigger_fraction_1, trigger_source_2,
+                                   trigger_slope_2, trigger_fraction_2)
+        self.set_external_trigger_params(trigger_coupling, trigger_range)
+        self.set_trigger_delay(delay_sec)
+        self.set_trigger_timeout(trigger_timeout_sec)
+
+    def acquire(self, channels, pretrigger, posttrigger, 
+                recordsperbuffer, buffersperacq,
+                timeout_sec = 1000, input_range_V=4,
+                clock_rate=1e6, sample_rate=1e3):
+        """
+        Dual port AutoDMA acquisition. Traditional AutoDMA.
+        Samples->Record->Buffer->Acquisition.
+        Buffer Organization for both channels - R1A, R1B, R2A, R2B, R3A, R3B..
+        """
+        samplesperrecord = pretrigger + posttrigger
+        memorySize_samples, bitsPerSample = self.board.getChannelInfo()
+        bytesPerSample = (bitsPerSample.value + 7) // 8
+        bytesPerRecord = bytesPerSample * samplesperrecord
+        channelcount = int(channels/3)+1
+        bytesperbuffer = bytesPerRecord * recordsperbuffer * channelcount
+        bufferCount = 4 #Makes 4 buffers available. Use a minimum of 2.
+#        buffer_array=[]
+        if (channels==1) or (channels==2):
+            ch=1
+            data_1={}
+        else:
+            ch=2
+            data_1={}
+            data_2={}
+        dn = int(clock_rate/sample_rate)
+
+        # Allocate DMA buffers
+    
+        sample_type = ctypes.c_uint8
+        if bytesPerSample > 1:
+            sample_type = ctypes.c_uint16
+    
+        buffers = []
+        for i in range(bufferCount):
+            buffers.append(ats.DMABuffer(self.board.handle, 
+                                         sample_type, bytesperbuffer))
+        self.set_record_size(pretrigger, posttrigger)
+        recordsperacq = recordsperbuffer * buffersperacq
+        #Configure the board to make an AutoDMA acquisition.
+        self.board.beforeAsyncRead(channels,
+                                   -pretrigger,
+                                   samplesperrecord,
+                                   recordsperbuffer,
+                                   recordsperacq,0)
+        for buffer in buffers:
+            #Make buffers available to be filled by board.
+            self.board.postAsyncBuffer(buffer.addr, buffer.size_bytes)
+            
+        start = time.clock() # Keep track of when acquisition started
+        try:
+            self.board.startCapture() # Arm the board to begin the acquisition.
+            print("Capturing %d buffers. Press <enter> to abort" %
+                  buffersperacq)
+            buffersCompleted = 0
+            bytesTransferred = 0
+            while (buffersCompleted < buffersperacq and not
+                   ats.enter_pressed()):
+                # Wait for the buffer at the head of the list of available
+                # buffers to be filled by the board.
+                buffer = buffers[buffersCompleted % len(buffers)]
+                self.board.waitAsyncBufferComplete(buffer.addr, 
+                                                   int(timeout_sec*1e3))
+#                buffer_array.append(buffer)
+                buffersCompleted += 1
+                bytesTransferred += buffer.size_bytes
+                value_array = buffer.buffer
+                check_start=time.time()
+#                volt_array = self.code_to_volt(value_array, input_range_V)
+                volt_array = 2*input_range_V*(value_array/(2**16-1)-0.5)
+                check_stop=time.time()
+                print('Time elapsed is {}'.format(check_stop-check_start))
+#                volt_array = value_array
+                n_per_chan = len(volt_array)//ch
+                data_1[str(buffersCompleted)] = []
+                data_1[str(buffersCompleted)].append(volt_array[
+                        :n_per_chan:dn])
+                if ch==2:
+                    data_2[str(buffersCompleted)] = []
+                    data_2[str(buffersCompleted)].append(volt_array[
+                            n_per_chan:-1:dn])
+        
+                # Add the buffer to the end of the list of available buffers.
+                self.board.postAsyncBuffer(buffer.addr, buffer.size_bytes)
+        finally:
+            self.board.abortAsyncRead()
+        # Compute the total transfer time, and display performance information.
+        transferTime_sec = time.clock() - start
+        print("Capture completed in %f sec" % transferTime_sec)
+        buffersPerSec = 0
+        bytesPerSec = 0
+        recordsPerSec = 0
+        if transferTime_sec > 0:
+            buffersPerSec = buffersCompleted / transferTime_sec
+            bytesPerSec = bytesTransferred / transferTime_sec
+            recordsPerSec = recordsperbuffer*buffersCompleted/transferTime_sec
+        print("Captured %d buffers (%f buffers per sec)" %
+              (buffersCompleted, buffersPerSec))
+        print("Captured %d records (%f records per sec)" %
+              (recordsperbuffer * buffersCompleted, recordsPerSec))
+        print("Transferred %d bytes (%f bytes per sec)" %
+              (bytesTransferred, bytesPerSec))
+        total_time=(samplesperrecord*recordsperbuffer*buffersperacq)/clock_rate
+        sample_number = int(sample_rate*total_time)
+        time_array = np.linspace(0, total_time, sample_number)
+        
+        return (data_1, data_2, time_array)
+        
+    def stitch_data(self, data_1, data_2, buffersperacq):
+        stitched_data_1 = []
+        stitched_data_2 = []
+        for i in range(1,buffersperacq+1):
+            stitched_data_1.append(data_1[str(i)][0])
+            stitched_data_2.append(data_2[str(i)][0])
+        stitched_data_1 = np.asarray(stitched_data_1)
+        stitched_data_2 = np.asarray(stitched_data_2)
+        stitched_data_1 = stitched_data_1.flatten()
+        stitched_data_2 = stitched_data_2.flatten()
+        return (stitched_data_1, stitched_data_2)
+    
+    def save_data(self, acquired_data, clock_rate, sample_rate, channels = 1,
+                  split = True, input_range_V = 2):
+        (buffer_array, samplesperrecord, recordsperbuffer, 
+         buffersperacq) = acquired_data
+        data = {}
+        for c in range(channels):
+            data[str(c+1)] = []
+        for i in range(buffersperacq):
+            value_array = buffer_array[i].buffer
+            volt_array = self.code_to_volt(value_array, input_range_V)
+            n_per_chan = len(volt_array)//channels
+            dn = int(clock_rate/sample_rate)
+            for c in range(channels):
+                data[str(c+1)].append(volt_array[
+                        c*n_per_chan:(c+1)*n_per_chan:dn])
+        for c in range(channels):
+            data[str(c+1)] = np.asarray(data[str(c+1)])
+            if not split:
+                data[str(c+1)] = data[str(c+1)].flatten()
+                total_time = (samplesperrecord*recordsperbuffer*
+                          buffersperacq)/clock_rate
+            else:
+                total_time = (samplesperrecord*recordsperbuffer)/clock_rate
+        sample_number = int(sample_rate*total_time)
+        time_array = np.linspace(0, total_time, sample_number)
+#        time_array = np.array([k for k in time_array], dtype = 'uint16')
+        if channels == 1:
+            return (time_array, data['1'])
+        else:
+            return (time_array, data['1'], data['2'])
+        
+    def code_to_volt(self, value_array, input_range_V):
+        coderange = 65535 #(2**16-1)
+        array = np.array([2*
+                input_range_V*(k/coderange-0.5) for k in value_array])
+        return array
+        
+                
+            

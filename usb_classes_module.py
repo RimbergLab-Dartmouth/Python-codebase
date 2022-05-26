@@ -3,7 +3,7 @@
 Created on Tue Feb 11 18:41:18 2020
 
 @author: Sisira
-Module containing classes for instruments requiring serial connection.
+Module containing classes for instruments requiring usb connection.
 """
 import visa
 import numpy as np
@@ -48,6 +48,7 @@ class usb_instrument:
         
 class keysight_33600A(usb_instrument):
     def __init__(self, addr,model_str='0x0957::0x5707::MY53804562'):
+        #2391::22279::MY53804562::0
         # inherit all the methods of gpib_instrument class
         super().__init__(addr,model_str)
         
@@ -241,6 +242,29 @@ class keysight_33600A(usb_instrument):
         ch_one = self.set_phase_deg(1,phase1)
         ch_two = self.set_phase_deg(2,phase2)
         return (ch_one,ch_two)
+    
+    def toggle_tracking(self, channel=1, state=1):
+        """
+        Toggles the tracking of the two sources to create identical outputs.
+        
+        Parameters:
+            channel (int): The other channel tracks this channel.
+            state (str): State of the channel to on, off or inverted. Options
+            'on' , 'off', or 'inv'
+        """
+        message = 'sour{}:trac {}'.format(channel,state)
+        self.write(message)
+        
+    def set_input_load(self, channel=1, load='def'):
+        """Sets the input load of the channel.
+        
+        Parameters:
+            channel (int): Source channel
+            load (str): load value. Generally used 'def' for 50 Ohms
+            and 'inf' for high impedance.
+        """
+        message = 'outp{}:load {}'.format(channel, load)
+        self.write(message)
     
 
     
