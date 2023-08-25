@@ -1,0 +1,6 @@
+Manually Installed Packages:
+pyvisa
+nidaqmx
+lmfit
+emcee
+mpmath
